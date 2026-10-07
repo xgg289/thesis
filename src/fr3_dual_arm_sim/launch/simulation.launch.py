@@ -3,17 +3,25 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, AppendEnvironmentVariable
+from launch.actions import (
+    IncludeLaunchDescription,
+    AppendEnvironmentVariable,
+    RegisterEventHandler,
+    GroupAction,
+)
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetParameter
 
 import xacro
 
 
 def generate_launch_description():
 
+    # ------------------------
     # Simulation package
+    # ------------------------
+
     pkg_dual_arm = get_package_share_directory(
         'fr3_dual_arm_sim'
     )
@@ -60,7 +68,7 @@ def generate_launch_description():
     }
 
     # -----------------------------
-    # Start Gazebo
+    #Gazebo
     # -----------------------------
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -73,6 +81,18 @@ def generate_launch_description():
         launch_arguments={
             'gz_args': f'{world_file} -r'
         }.items()
+    )
+
+    # -----------------------------
+    # Gazebo -> ROS clock
+    # -----------------------------
+    gz_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        arguments=[
+            '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'
+        ],
+        output='screen'
     )
 
     # -----------------------------
@@ -125,6 +145,99 @@ def generate_launch_description():
         arguments=['right_fr3_arm_controller'],
         output='screen'
     )
+
+    # -----------------------------
+    # MoveIt
+    # -----------------------------
+    move_group = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                pkg_moveit_description,
+                'launch',
+                'move_group.launch.py'
+            )
+        )
+    )
+
+    # -----------------------------
+    # RViz
+    # -----------------------------
+    moveit_rviz = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                pkg_moveit_description,
+                'launch',
+                'moveit_rviz.launch.py'
+            )
+        )
+    )
+
+    # -----------------------------
+    # Gazebo simulation time
+    # -----------------------------
+    moveit_and_rviz = GroupAction([
+        SetParameter(
+            name='use_sim_time',
+            value=True
+        ),
+
+        move_group,
+        moveit_rviz
+    ])
+
+    # ------------------------------------------------
+    # Startup order:
+    #
+    # robot spawned
+    #      ↓
+    # joint_state_broadcaster
+    #      ↓
+    # left arm controller
+    #      ↓
+    # right arm controller
+    #      ↓
+    # MoveIt + RViz
+    # ------------------------------------------------
+
+    start_joint_state_broadcaster = RegisterEventHandler(
+        OnProcessExit(
+            target_action=spawn_robot,
+            on_exit=[
+                joint_state_broadcaster_spawner
+            ]
+        )
+    )
+
+    start_left_arm_controller = RegisterEventHandler(
+        OnProcessExit(
+            target_action=joint_state_broadcaster_spawner,
+            on_exit=[
+                left_arm_controller_spawner
+            ]
+        )
+    )
+
+    start_right_arm_controller = RegisterEventHandler(
+        OnProcessExit(
+            target_action=left_arm_controller_spawner,
+            on_exit=[
+                right_arm_controller_spawner
+            ]
+        )
+    )
+
+    start_moveit_and_rviz = RegisterEventHandler(
+        OnProcessExit(
+            target_action=right_arm_controller_spawner,
+            on_exit=[
+                moveit_and_rviz
+            ]
+        )
+    )
+
+    # -----------------------------
+    # Launch
+    # -----------------------------
     return LaunchDescription([
 
         # Allow Gazebo to find Franka meshes/resources
@@ -135,13 +248,18 @@ def generate_launch_description():
 
         gazebo,
 
+        gz_bridge,
+
         robot_state_publisher,
 
         spawn_robot,
 
-        joint_state_broadcaster_spawner,
+        start_joint_state_broadcaster,
 
-        left_arm_controller_spawner,
+        start_left_arm_controller,
 
-        right_arm_controller_spawner
+        start_right_arm_controller,
+
+        start_moveit_and_rviz
+        
     ])
