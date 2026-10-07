@@ -8,4 +8,9 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/dual_arm_move_group_joint_pose1_pose2.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()
