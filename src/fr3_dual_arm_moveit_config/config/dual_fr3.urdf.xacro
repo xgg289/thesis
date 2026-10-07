@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="dual_fr3">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import dual_fr3 urdf file -->
+    <xacro:include filename="$(find fr3_dual_arm_sim)/urdf/dual_fr3.urdf.xacro" />
+    <xacro:include filename="dual_fr3.ros2_control.xacro" />
+
+    <xacro:dual_fr3_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+</robot>
