@@ -13,9 +13,14 @@ import xacro
 
 def generate_launch_description():
 
-    # Our package
+    # Simulation package
     pkg_dual_arm = get_package_share_directory(
         'fr3_dual_arm_sim'
+    )
+
+    # MoveIt / ros2_control package
+    pkg_moveit_description = get_package_share_directory(
+        'fr3_dual_arm_moveit_config'
     )
 
     # Gazebo ROS package
@@ -41,9 +46,9 @@ def generate_launch_description():
     # Dual FR3 Xacro
     # -----------------------------
     xacro_file = os.path.join(
-        pkg_dual_arm,
-        'urdf',
-        'dual_fr3.xacro'
+        pkg_moveit_description,
+        'config',
+        'dual_fr3.urdf.xacro'
     )
 
     robot_description_xml = xacro.process_file(
