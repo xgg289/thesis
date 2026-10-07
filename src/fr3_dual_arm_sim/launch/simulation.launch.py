@@ -102,7 +102,29 @@ def generate_launch_description():
         ],
         output='screen'
     )
+    # -----------------------------
+    # Controller Spawners
+    # -----------------------------
+    joint_state_broadcaster_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['joint_state_broadcaster'],
+        output='screen'
+    )
 
+    left_arm_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['left_fr3_arm_controller'],
+        output='screen'
+    )
+
+    right_arm_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['right_fr3_arm_controller'],
+        output='screen'
+    )
     return LaunchDescription([
 
         # Allow Gazebo to find Franka meshes/resources
@@ -115,5 +137,11 @@ def generate_launch_description():
 
         robot_state_publisher,
 
-        spawn_robot
+        spawn_robot,
+
+        joint_state_broadcaster_spawner,
+
+        left_arm_controller_spawner,
+
+        right_arm_controller_spawner
     ])
