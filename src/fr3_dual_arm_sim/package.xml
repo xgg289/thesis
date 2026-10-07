@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>dual_arm_robot_setup</name>
+  <name>fr3_dual_arm_sim</name>
   <version>0.0.1</version>
 
-  <description>Dual Franka setup</description>
+  <description>FR3 Dual Arm Simulation</description>
 
   <maintainer email="ratul@example.com">Ratul</maintainer>
   <license>Apache-2.0</license>

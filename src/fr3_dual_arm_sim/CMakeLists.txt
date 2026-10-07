@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(dual_arm_robot_setup)
+project(fr3_dual_arm_sim)
 
 find_package(ament_cmake REQUIRED)
 

@@ -15,7 +15,7 @@ def generate_launch_description():
 
     # Our package
     pkg_dual_arm = get_package_share_directory(
-        'dual_arm_robot_setup'
+        'fr3_dual_arm_sim''
     )
 
     # Gazebo ROS package
