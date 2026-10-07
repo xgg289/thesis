@@ -1,0 +1,76 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="dual_fr3">
+
+  <link name="base">
+    <visual>
+      <origin xyz="-0.1 0.0 0.0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.9 1.6 1.68"/>
+      </geometry>
+      <material name="White">
+        <color rgba="1.0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="-0.1 0.0 0.0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.9 1.6 1.68"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="world"/>
+
+  <joint name="fixed" type="fixed">
+    <parent link="world"/>
+    <child link="base"/>
+  </joint>
+
+  <xacro:include filename="$(find franka_description)/robots/common/franka_robot.xacro"/>
+
+  <xacro:macro name="spawn_fr3" params="prefix *origin">
+
+    <joint name="${prefix}base_to_arm_joint" type="fixed">
+      <xacro:insert_block name="origin"/>
+      <parent link="base"/>
+      <child link="${prefix}fr3_link0"/>
+    </joint>
+
+    <xacro:franka_robot
+      robot_type="fr3"
+      hand="true"
+      parent=""
+      ee_id="franka_hand"
+      special_connection=""
+      xyz_ee="0 0 0"
+      rpy_ee="0 0 ${-pi/4}"
+      tcp_xyz="0 0 0.1034"
+      tcp_rpy="0 0 0"
+      safety_distance="0.03"
+      with_sc="true"
+      include_self_collision_geometry="false"
+      no_prefix="false"
+      arm_prefix="${prefix}"
+      description_pkg="franka_description"
+      connected_to=""/>
+
+  </xacro:macro>
+
+  <xacro:spawn_fr3 prefix="left_">
+    <origin xyz="-0.07 0.4 0.84" rpy="0 0 3.14159"/>
+  </xacro:spawn_fr3>
+
+  <xacro:spawn_fr3 prefix="right_">
+    <origin xyz="-0.07 -0.5 0.84" rpy="0 0 3.14159"/>
+  </xacro:spawn_fr3>
+
+  <gazebo reference="left_fr3_hand_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+
+  <gazebo reference="right_fr3_hand_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+
+</robot>
