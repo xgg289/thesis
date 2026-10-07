@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: fr3_dual_arm_sim
+    relative_path: urdf/dual_fr3.urdf
+  srdf:
+    relative_path: config/dual_fr3.srdf
+  package_settings:
+    author_name: example
+    author_email: example@example.com
+    generated_timestamp: 1761991990
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
