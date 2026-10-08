@@ -1,9 +1,9 @@
 import os
-
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import (
+    DeclareLaunchArgument,
     IncludeLaunchDescription,
     AppendEnvironmentVariable,
     RegisterEventHandler,
@@ -11,10 +11,11 @@ from launch.actions import (
 )
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+
 from launch_ros.actions import Node, SetParameter
 
 import xacro
-
 
 def generate_launch_description():
 
@@ -44,12 +45,15 @@ def generate_launch_description():
     # -----------------------------
     # World
     # -----------------------------
-    world_file = os.path.join(
-        pkg_dual_arm,
-        'worlds',
-        'simulation_world.sdf'
+    world_path_arg = DeclareLaunchArgument(
+        'world_path',
+        default_value=os.path.join(
+            pkg_dual_arm,
+            'worlds',
+            'simulation_world.sdf'
+        ),
+        description='Path to the Gazebo world file'
     )
-
     # -----------------------------
     # Dual FR3 Xacro
     # -----------------------------
@@ -58,14 +62,25 @@ def generate_launch_description():
         'config',
         'dual_fr3.urdf.xacro'
     )
-
-    robot_description_xml = xacro.process_file(
+    robot_description_config = xacro.process_file(
         xacro_file
-    ).toxml()
+    )
 
     robot_description = {
-        'robot_description': robot_description_xml
+        'robot_description':
+        robot_description_config.toxml()
     }
+
+    srdf_file = os.path.join(
+        pkg_moveit_description,
+        'config',
+        'dual_fr3.srdf'
+    )
+
+    with open(srdf_file, 'r') as f:
+        robot_description_semantic = {
+            'robot_description_semantic': f.read()
+        }
 
     # -----------------------------
     #Gazebo
@@ -79,7 +94,11 @@ def generate_launch_description():
             )
         ),
         launch_arguments={
-            'gz_args': f'{world_file} -r'
+            'gz_args': [
+                LaunchConfiguration('world_path'),
+                ' -r -v 4',
+                ' --physics-engine gz-physics-bullet-featherstone-plugin'
+            ]
         }.items()
     )
 
@@ -145,6 +164,19 @@ def generate_launch_description():
         arguments=['right_fr3_arm_controller'],
         output='screen'
     )
+    left_hand_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['left_fr3_hand_controller'],
+        output='screen'
+    )
+
+    right_hand_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['right_fr3_hand_controller'],
+        output='screen'
+    )
 
     # -----------------------------
     # MoveIt
@@ -208,29 +240,14 @@ def generate_launch_description():
         )
     )
 
-    start_left_arm_controller = RegisterEventHandler(
+    start_all_controllers = RegisterEventHandler(
         OnProcessExit(
             target_action=joint_state_broadcaster_spawner,
             on_exit=[
-                left_arm_controller_spawner
-            ]
-        )
-    )
-
-    start_right_arm_controller = RegisterEventHandler(
-        OnProcessExit(
-            target_action=left_arm_controller_spawner,
-            on_exit=[
-                right_arm_controller_spawner
-            ]
-        )
-    )
-
-    start_moveit_and_rviz = RegisterEventHandler(
-        OnProcessExit(
-            target_action=right_arm_controller_spawner,
-            on_exit=[
-                moveit_and_rviz
+                left_arm_controller_spawner,
+                right_arm_controller_spawner,
+                left_hand_controller_spawner,
+                right_hand_controller_spawner,
             ]
         )
     )
@@ -246,6 +263,8 @@ def generate_launch_description():
             value=os.path.dirname(pkg_franka_description)
         ),
 
+        world_path_arg,
+        
         gazebo,
 
         gz_bridge,
@@ -256,10 +275,8 @@ def generate_launch_description():
 
         start_joint_state_broadcaster,
 
-        start_left_arm_controller,
+        start_all_controllers,
 
-        start_right_arm_controller,
-
-        start_moveit_and_rviz
+        moveit_and_rviz
         
     ])
