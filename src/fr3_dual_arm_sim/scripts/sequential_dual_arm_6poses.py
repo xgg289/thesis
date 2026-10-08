@@ -28,7 +28,6 @@ class DualArmMoveGroupJointPose(Node):
         self.exec_client = ActionClient(self, ExecuteTrajectory, "/execute_trajectory")
 
         # ---Target poses---
-        # --- Target poses ---
         base = [0.0, -0.5, 0.0, -1.5, 0.0, 1.0, 0.5]
 
         def pose(arm, joint1, joint3):
@@ -148,64 +147,188 @@ class DualArmMoveGroupJointPose(Node):
             self.get_logger().error(f"Execution FAILED ❌ error_code={result.result.error_code.val}")
         return ok
 
+
     def run(self):
         if not self.wait_for_servers():
             return
+
         if not self.wait_for_joint_state():
-            self.get_logger().error("No /joint_states received. Is simulation running?")
+            self.get_logger().error("No /joint_states received.")
             return
 
-        # 1) Left arm -> pose1
-        self.get_logger().info("Planning LEFT arm to pose1...")
-        traj_l1 = self.plan_for_group("left_fr3_arm", self.left_pose1)
-        if traj_l1:
-            self.get_logger().info("Executing LEFT arm to pose1...")
-            self.execute_trajectory(traj_l1)
+        # Six predefined movements: LEFT first, then RIGHT
+        movements = [
+            ("LEFT", "pose1", "left_fr3_arm", self.left_pose1),
+            ("LEFT", "pose2", "left_fr3_arm", self.left_pose2),
+            ("LEFT", "pose3", "left_fr3_arm", self.left_pose3),
+            ("RIGHT", "pose4", "right_fr3_arm", self.right_pose4),
+            ("RIGHT", "pose5", "right_fr3_arm", self.right_pose5),
+            ("RIGHT", "pose6", "right_fr3_arm", self.right_pose6),
+        ]
 
-        # 2) Left arm -> pose2
-        self.get_logger().info("Planning LEFT arm to pose2...")
-        traj_l2 = self.plan_for_group("left_fr3_arm", self.left_pose2)
-        if traj_l2:
-            self.get_logger().info("Executing LEFT arm to pose2...")
-            self.execute_trajectory(traj_l2)
+        results = []
+        total_start = time.perf_counter()
 
-        # 3) Left arm -> pose3
-        self.get_logger().info("Planning LEFT arm to pose3...")
-        traj_l3 = self.plan_for_group("left_fr3_arm", self.left_pose3)
-        if traj_l3:
-            self.get_logger().info("Executing LEFT arm to pose3...")
-            self.execute_trajectory(traj_l3)
+        for arm, pose_name, group, target in movements:
 
-        # 4) Right arm -> pose4
-        self.get_logger().info("Planning RIGHT arm to pose4...")
-        traj_r4 = self.plan_for_group("right_fr3_arm", self.right_pose4)
-        if traj_r4:
-            self.get_logger().info("Executing RIGHT arm to pose4...")
-            self.execute_trajectory(traj_r4)
+            self.get_logger().info(
+                f"Planning {arm} {pose_name}..."
+            )
 
-        # 5) Right arm -> pose5
-        self.get_logger().info("Planning RIGHT arm to pose5...")
-        traj_r5 = self.plan_for_group("right_fr3_arm", self.right_pose5)
-        if traj_r5:
-            self.get_logger().info("Executing RIGHT arm to pose5...")
-            self.execute_trajectory(traj_r5)
+            # Planning time
+            planning_start = time.perf_counter()
 
-        # 6) Right arm -> pose6
-        self.get_logger().info("Planning RIGHT arm to pose6...")
-        traj_r6 = self.plan_for_group("right_fr3_arm", self.right_pose6)
-        if traj_r6:
-            self.get_logger().info("Executing RIGHT arm to pose6...")
-            self.execute_trajectory(traj_r6)
+            trajectory = None
+            planning_error = None
 
-        
+            try:
+                trajectory = self.plan_for_group(group, target)
+            except Exception as exc:
+                planning_error = str(exc)
+
+            planning_time = time.perf_counter() - planning_start
+
+            # Execution results
+            execution_time = None
+            success = False
+            status = "PLANNING FAILED"
+
+            if planning_error is not None:
+                self.get_logger().error(
+                    f"Planning error: {planning_error}"
+                )
+
+            if trajectory is not None:
+                self.get_logger().info(
+                    f"Executing {arm} {pose_name}..."
+                )
+
+                # Execution time
+                execution_start = time.perf_counter()
+
+                try:
+                    success = self.execute_trajectory(trajectory)
+                    status = "SUCCESS" if success else "EXECUTION FAILED"
+
+                except Exception as exc:
+                    success = False
+                    status = "EXECUTION ERROR"
+                    self.get_logger().error(
+                        f"Execution error: {exc}"
+                    )
+
+                execution_time = (
+                    time.perf_counter() - execution_start
+                )
+
+            results.append({
+                "arm": arm,
+                "pose": pose_name,
+                "planning_time": planning_time,
+                "execution_time": execution_time,
+                "success": success,
+                "status": status,
+            })
+
+            if not success:
+                self.get_logger().error(
+                    f"{arm} {pose_name} failed. Stopping sequence."
+                )
+                break
+
+        # Total time
+        total_time = time.perf_counter() - total_start
+
+        # Planning and execution totals
+        total_planning = sum(
+            r["planning_time"] for r in results
+        )
+
+        left_time = sum(
+            r["execution_time"]
+            for r in results
+            if r["arm"] == "LEFT"
+            and r["execution_time"] is not None
+        )
+
+        right_time = sum(
+            r["execution_time"]
+            for r in results
+            if r["arm"] == "RIGHT"
+            and r["execution_time"] is not None
+        )
+
+        total_execution = left_time + right_time
+
+        overhead = total_time - total_planning - total_execution
+
+        successful_poses = sum(
+            1 for r in results if r["success"]
+        )
+
+        complete_success = (
+            len(results) == len(movements)
+            and all(r["success"] for r in results)
+        )
+
+        # Terminal results table
+        lines = [
+            "",
+            "================ INDIVIDUAL POSE RESULTS ================",
+            f"{'ARM':<8} {'POSE':<8} {'PLAN (s)':>11} "
+            f"{'EXEC (s)':>11} {'STATUS':>18}",
+            "-" * 60,
+        ]
+
+        for r in results:
+            execution = (
+                f"{r['execution_time']:.4f}"
+                if r["execution_time"] is not None
+                else "N/A"
+            )
+
+            lines.append(
+                f"{r['arm']:<8} "
+                f"{r['pose']:<8} "
+                f"{r['planning_time']:>11.4f} "
+                f"{execution:>11} "
+                f"{r['status']:>18}"
+            )
+
+        lines.extend([
+            "-" * 60,
+            "",
+            "================ FINAL EXPERIMENT SUMMARY ===============",
+            f"Total planning time:        {total_planning:.4f} s",
+            f"Left-arm movement time:     {left_time:.4f} s",
+            f"Right-arm movement time:    {right_time:.4f} s",
+            f"Total execution time:       {total_execution:.4f} s",
+            f"Other overhead:             {overhead:.4f} s",
+            f"Total trial time:           {total_time:.4f} s",
+            f"Successful poses:           {successful_poses}/{len(movements)}",
+            f"Complete sequence success:  {complete_success}",
+            "Collision-free execution:  NOT VERIFIED",
+            "=========================================================",
+        ])
+
+        self.get_logger().info("\n".join(lines))
+
+
 def main(args=None):
-    rclpy.init(args=args)
-    node = DualArmMoveGroupJointPose()
-    node.run()
-    node.destroy_node()
-    rclpy.shutdown()
+        rclpy.init(args=args)
+        node = None
+
+        try:
+            node = DualArmMoveGroupJointPose()
+            node.run()
+
+        finally:
+            if node is not None:
+                node.destroy_node()
+
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 if __name__ == "__main__":
-    main()
-
+        main()
