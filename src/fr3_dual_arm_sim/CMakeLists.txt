@@ -12,6 +12,7 @@ install(PROGRAMS
   scripts/dual_arm_move_group_joint_pose1_pose2.py
   scripts/moveit_node.py
   scripts/seq_dual_arm_move_group.py
+  scripts/both_arms_gripper_twice.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

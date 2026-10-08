@@ -269,3 +269,8 @@ right_fr3_hand:
     - SPARSkConfigDefault
     - SPARStwokConfigDefault
     - TrajOptDefault
+
+both_arms:
+  planner_configs:
+    - RRTConnectkConfigDefault
+  enforce_joint_model_state_space: true
