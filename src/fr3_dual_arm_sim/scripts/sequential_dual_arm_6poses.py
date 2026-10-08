@@ -18,7 +18,7 @@ class DualArmMoveGroupJointPose(Node):
     """
 
     def __init__(self):
-        super().__init__("dual_arm_move_group_joint_pose1_pose2")
+        super().__init__("sequential_dual_arm_6poses")
         self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
 
         self.latest_joint_state = None
@@ -28,25 +28,28 @@ class DualArmMoveGroupJointPose(Node):
         self.exec_client = ActionClient(self, ExecuteTrajectory, "/execute_trajectory")
 
         # ---Target poses---
-        self.right_pose1 = {
-            "right_fr3_joint1": 0.0,
-            "right_fr3_joint2": -0.5,
-            "right_fr3_joint3": 0.0,
-            "right_fr3_joint4": -1.5,
-            "right_fr3_joint5": 0.0,
-            "right_fr3_joint6": 1.0,
-            "right_fr3_joint7": 0.5,
-        }
+        # --- Target poses ---
+        base = [0.0, -0.5, 0.0, -1.5, 0.0, 1.0, 0.5]
 
-        self.left_pose2 = {
-            "left_fr3_joint1": 0.0,
-            "left_fr3_joint2": -0.5,
-            "left_fr3_joint3": 0.0,
-            "left_fr3_joint4": -1.5,
-            "left_fr3_joint5": 0.0,
-            "left_fr3_joint6": 1.0,
-            "left_fr3_joint7": 0.5,
-        }
+        def pose(arm, joint1, joint3):
+            joints = base.copy()
+            joints[0] = joint1
+            joints[2] = joint3
+            return {
+                f"{arm}_fr3_joint{i}": value
+                for i, value in enumerate(joints, start=1)
+            }
+
+        # Left arm: pose1, pose2, pose3
+        self.left_pose1 = pose("left", -0.8, 0.3)
+        self.left_pose2 = pose("left",  0.0, -0.4)
+        self.left_pose3 = pose("left",  0.8, 0.3)
+
+        # Right arm: pose4, pose5, pose6
+        self.right_pose4 = pose("right",  0.8, -0.3)
+        self.right_pose5 = pose("right",  0.0, 0.4)
+        self.right_pose6 = pose("right", -0.8, -0.3)
+
 
     def _js_cb(self, msg: JointState):
         self.latest_joint_state = msg
@@ -152,21 +155,49 @@ class DualArmMoveGroupJointPose(Node):
             self.get_logger().error("No /joint_states received. Is simulation running?")
             return
 
-        # 1) Right arm -> pose1
-        self.get_logger().info("Planning RIGHT arm to pose1...")
-        traj_r = self.plan_for_group("right_fr3_arm", self.right_pose1)
-        if traj_r:
-            self.get_logger().info("Executing RIGHT arm...")
-            self.execute_trajectory(traj_r)
+        # 1) Left arm -> pose1
+        self.get_logger().info("Planning LEFT arm to pose1...")
+        traj_l1 = self.plan_for_group("left_fr3_arm", self.left_pose1)
+        if traj_l1:
+            self.get_logger().info("Executing LEFT arm to pose1...")
+            self.execute_trajectory(traj_l1)
 
         # 2) Left arm -> pose2
         self.get_logger().info("Planning LEFT arm to pose2...")
-        traj_l = self.plan_for_group("left_fr3_arm", self.left_pose2)
-        if traj_l:
-            self.get_logger().info("Executing LEFT arm...")
-            self.execute_trajectory(traj_l)
+        traj_l2 = self.plan_for_group("left_fr3_arm", self.left_pose2)
+        if traj_l2:
+            self.get_logger().info("Executing LEFT arm to pose2...")
+            self.execute_trajectory(traj_l2)
 
+        # 3) Left arm -> pose3
+        self.get_logger().info("Planning LEFT arm to pose3...")
+        traj_l3 = self.plan_for_group("left_fr3_arm", self.left_pose3)
+        if traj_l3:
+            self.get_logger().info("Executing LEFT arm to pose3...")
+            self.execute_trajectory(traj_l3)
 
+        # 4) Right arm -> pose4
+        self.get_logger().info("Planning RIGHT arm to pose4...")
+        traj_r4 = self.plan_for_group("right_fr3_arm", self.right_pose4)
+        if traj_r4:
+            self.get_logger().info("Executing RIGHT arm to pose4...")
+            self.execute_trajectory(traj_r4)
+
+        # 5) Right arm -> pose5
+        self.get_logger().info("Planning RIGHT arm to pose5...")
+        traj_r5 = self.plan_for_group("right_fr3_arm", self.right_pose5)
+        if traj_r5:
+            self.get_logger().info("Executing RIGHT arm to pose5...")
+            self.execute_trajectory(traj_r5)
+
+        # 6) Right arm -> pose6
+        self.get_logger().info("Planning RIGHT arm to pose6...")
+        traj_r6 = self.plan_for_group("right_fr3_arm", self.right_pose6)
+        if traj_r6:
+            self.get_logger().info("Executing RIGHT arm to pose6...")
+            self.execute_trajectory(traj_r6)
+
+        
 def main(args=None):
     rclpy.init(args=args)
     node = DualArmMoveGroupJointPose()

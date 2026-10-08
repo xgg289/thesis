@@ -9,7 +9,7 @@ install(
 )
 
 install(PROGRAMS
-  scripts/dual_arm_move_group_joint_pose1_pose2.py
+  scripts/sequential_dual_arm_6poses.py
   scripts/moveit_node.py
   scripts/seq_dual_arm_move_group.py
   scripts/both_arms_gripper_twice.py
