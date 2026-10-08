@@ -38,6 +38,11 @@ class DualArmMoveGroupJointPose(Node):
                 f"{arm}_fr3_joint{i}": value
                 for i, value in enumerate(joints, start=1)
             }
+        
+        #Home
+        self.left_home = pose("left", 0.0, 0.0)
+        self.right_home = pose("right", 0.0, 0.0)
+
 
         # Left arm: pose1, pose2, pose3
         self.left_pose1 = pose("left", -0.8, 0.3)
@@ -147,13 +152,36 @@ class DualArmMoveGroupJointPose(Node):
             self.get_logger().error(f"Execution FAILED ❌ error_code={result.result.error_code.val}")
         return ok
 
+    def move_home(self):
+        for arm in ("left", "right"):
+            rclpy.spin_once(self, timeout_sec=0.1)
+            target = getattr(self, f"{arm}_home")
+            joints = dict(zip(self.latest_joint_state.name,
+                              self.latest_joint_state.position))
 
+            if all(abs(joints.get(j, float("inf")) - v) < 0.03
+                   for j, v in target.items()):
+                continue
+
+            traj = self.plan_for_group(f"{arm}_fr3_arm", target)
+            if traj is None or not self.execute_trajectory(traj):
+                return False
+
+        return True
+       
     def run(self):
         if not self.wait_for_servers():
             return
 
         if not self.wait_for_joint_state():
             self.get_logger().error("No /joint_states received.")
+            return
+
+        # Initial HOME
+        self.get_logger().info("Preparing initial HOME position...")
+
+        if not self.move_home():
+            self.get_logger().error("Initial HOME failed.")
             return
 
         # Six predefined movements: LEFT first, then RIGHT
@@ -312,6 +340,23 @@ class DualArmMoveGroupJointPose(Node):
         ])
 
         self.get_logger().info("\n".join(lines))
+
+        # Return HOME 
+        if complete_success:
+            self.get_logger().info(
+                "Six poses complete. Returning both arms HOME..."
+            )
+
+            if self.move_home():
+                self.get_logger().info(
+                    "Both arms returned HOME successfully."
+                )
+            else:
+                self.get_logger().error("Final HOME failed.")
+        else:
+            self.get_logger().warning(
+                "Experiment incomplete. Final HOME skipped."
+            )
 
 
 def main(args=None):
