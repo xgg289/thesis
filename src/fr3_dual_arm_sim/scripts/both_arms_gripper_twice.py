@@ -58,7 +58,7 @@ class DualArmMovement(Node):
 
         constraints = Constraints()
 
-        # Same joint targets as your original script.
+        # Joint targets as original script.
         for side, joint1 in (
             ("left", left_joint1),
             ("right", right_joint1),
@@ -103,7 +103,7 @@ class DualArmMovement(Node):
     def move_grippers(self, position):
         futures = []
 
-        # Send both commands before waiting.
+
         for client in self.grippers:
             goal = GripperCommand.Goal()
             goal.command.position = position
