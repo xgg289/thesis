@@ -13,10 +13,6 @@ from rclpy.action import ActionClient
 
 
 class DualArmMoveGroupJointPose(Node):
-    """
-    Plans using the existing /move_group (GetMotionPlan service) and executes using /execute_trajectory action.
-    This avoids MoveItPy pipeline-loading problems in a separate Python process.
-    """
 
     def __init__(self):
         super().__init__("sequential_dual_arm_6poses")
