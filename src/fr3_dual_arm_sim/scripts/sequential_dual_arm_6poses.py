@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
 import time
+import math
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 
 from sensor_msgs.msg import JointState
-from moveit_msgs.srv import GetMotionPlan
+from moveit_msgs.srv import GetMotionPlan, GetStateValidity
 from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint, RobotState
 from moveit_msgs.action import ExecuteTrajectory
 from rclpy.action import ActionClient
 
 
 class DualArmMoveGroupJointPose(Node):
-    """
-    Plans using the existing /move_group (GetMotionPlan service) and executes using /execute_trajectory action.
-    This avoids MoveItPy pipeline-loading problems in a separate Python process.
-    """
 
     def __init__(self):
         super().__init__("sequential_dual_arm_6poses")
@@ -25,6 +22,7 @@ class DualArmMoveGroupJointPose(Node):
         self.create_subscription(JointState, "/joint_states", self._js_cb, 10)
 
         self.plan_client = self.create_client(GetMotionPlan, "/plan_kinematic_path")
+        self.check_client = self.create_client(GetStateValidity, "/check_state_validity")
         self.exec_client = ActionClient(self, ExecuteTrajectory, "/execute_trajectory")
 
         # ---Target poses---
@@ -68,6 +66,10 @@ class DualArmMoveGroupJointPose(Node):
         self.get_logger().info("Waiting for /plan_kinematic_path service...")
         if not self.plan_client.wait_for_service(timeout_sec=10.0):
             self.get_logger().error("/plan_kinematic_path service not available.")
+            return False
+
+        if not self.check_client.wait_for_service(timeout_sec=10.0):
+            self.get_logger().error("/check_state_validity service not available.")
             return False
 
         self.get_logger().info("Waiting for /execute_trajectory action server...")
@@ -128,6 +130,51 @@ class DualArmMoveGroupJointPose(Node):
 
         self.get_logger().info(f"Planning succeeded for {group_name}.")
         return res.trajectory
+
+    def check_trajectory(self, trajectory, start_state):
+        names = list(trajectory.joint_trajectory.joint_names)
+        points = trajectory.joint_trajectory.points
+        if not names or not points:
+            return False
+
+        current = dict(zip(start_state.joint_state.name, start_state.joint_state.position))
+        if any(name not in current for name in names):
+            return False
+
+        previous = [current[name] for name in names]
+
+        for point in points:
+            target = list(point.positions)
+            if len(target) != len(names):
+                return False
+
+            distance = max(abs(a - b) for a, b in zip(previous, target))
+            steps = max(1, math.ceil(distance / 0.1))
+
+            for step in range(1, steps + 1):
+                fraction = step / steps
+                sample = current.copy()
+                for name, a, b in zip(names, previous, target):
+                    sample[name] = a + (b - a) * fraction
+
+                state = RobotState()
+                state.joint_state.name = list(sample.keys())
+                state.joint_state.position = list(sample.values())
+
+                req = GetStateValidity.Request()
+                req.robot_state = state
+                req.group_name = ""  # Check the complete robot state
+
+                future = self.check_client.call_async(req)
+                rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+                if not future.done() or future.result() is None:
+                    return False
+                if not future.result().valid:
+                    return False
+
+            previous = target
+
+        return True
 
     def execute_trajectory(self, traj) -> bool:
         goal = ExecuteTrajectory.Goal()
@@ -207,6 +254,7 @@ class DualArmMoveGroupJointPose(Node):
             )
 
             # Planning time
+            start_state = self.build_start_state()
             planning_start = time.perf_counter()
 
             trajectory = None
@@ -220,6 +268,7 @@ class DualArmMoveGroupJointPose(Node):
             planning_time = time.perf_counter() - planning_start
 
             # Execution results
+            checking_time = 0.0
             execution_time = None
             success = False
             status = "PLANNING FAILED"
@@ -230,32 +279,45 @@ class DualArmMoveGroupJointPose(Node):
                 )
 
             if trajectory is not None:
-                self.get_logger().info(
-                    f"Executing {arm} {pose_name}..."
-                )
-
-                # Execution time
-                execution_start = time.perf_counter()
-
+                checking_start = time.perf_counter()
                 try:
-                    success = self.execute_trajectory(trajectory)
-                    status = "SUCCESS" if success else "EXECUTION FAILED"
-
+                    valid = self.check_trajectory(trajectory, start_state)
+                    if not valid:
+                        status = "STATE CHECK FAILED"
                 except Exception as exc:
-                    success = False
-                    status = "EXECUTION ERROR"
-                    self.get_logger().error(
-                        f"Execution error: {exc}"
+                    valid = False
+                    status = "STATE CHECK ERROR"
+                    self.get_logger().error(f"State check error: {exc}")
+                checking_time = time.perf_counter() - checking_start
+
+                if valid:
+                    self.get_logger().info(
+                        f"Executing {arm} {pose_name}..."
                     )
 
-                execution_time = (
-                    time.perf_counter() - execution_start
-                )
+                    # Execution time
+                    execution_start = time.perf_counter()
+
+                    try:
+                        success = self.execute_trajectory(trajectory)
+                        status = "SUCCESS" if success else "EXECUTION FAILED"
+
+                    except Exception as exc:
+                        success = False
+                        status = "EXECUTION ERROR"
+                        self.get_logger().error(
+                            f"Execution error: {exc}"
+                        )
+
+                    execution_time = (
+                        time.perf_counter() - execution_start
+                    )
 
             results.append({
                 "arm": arm,
                 "pose": pose_name,
                 "planning_time": planning_time,
+                "checking_time": checking_time,
                 "execution_time": execution_time,
                 "success": success,
                 "status": status,
@@ -274,6 +336,7 @@ class DualArmMoveGroupJointPose(Node):
         total_planning = sum(
             r["planning_time"] for r in results
         )
+        total_checking = sum(r["checking_time"] for r in results)
 
         left_time = sum(
             r["execution_time"]
@@ -291,8 +354,6 @@ class DualArmMoveGroupJointPose(Node):
 
         total_execution = left_time + right_time
 
-        overhead = total_time - total_planning - total_execution
-
         successful_poses = sum(
             1 for r in results if r["success"]
         )
@@ -307,8 +368,8 @@ class DualArmMoveGroupJointPose(Node):
             "",
             "================ INDIVIDUAL POSE RESULTS ================",
             f"{'ARM':<8} {'POSE':<8} {'PLAN (s)':>11} "
-            f"{'EXEC (s)':>11} {'STATUS':>18}",
-            "-" * 60,
+            f"{'CHECK (s)':>11} {'EXEC (s)':>11} {'STATUS':>18}",
+            "-" * 73,
         ]
 
         for r in results:
@@ -322,27 +383,20 @@ class DualArmMoveGroupJointPose(Node):
                 f"{r['arm']:<8} "
                 f"{r['pose']:<8} "
                 f"{r['planning_time']:>11.4f} "
+                f"{r['checking_time']:>11.4f} "
                 f"{execution:>11} "
                 f"{r['status']:>18}"
             )
 
-        lines.extend([
-            "-" * 60,
-            "",
-            "================ FINAL EXPERIMENT SUMMARY ===============",
-            f"Total planning time:        {total_planning:.4f} s",
-            f"Left-arm movement time:     {left_time:.4f} s",
-            f"Right-arm movement time:    {right_time:.4f} s",
-            f"Total execution time:       {total_execution:.4f} s",
-            f"Other overhead:             {overhead:.4f} s",
-            f"Total trial time:           {total_time:.4f} s",
-            f"Successful poses:           {successful_poses}/{len(movements)}",
-            f"Complete sequence success:  {complete_success}",
-            "Collision-free execution:  NOT VERIFIED",
-            "=========================================================",
-        ])
-
-        self.get_logger().info("\n".join(lines))
+        print_trial_table(
+            self, total_planning, total_checking,
+            total_execution if any(r["execution_time"] is not None for r in results) else None,
+            total_time, complete_success,
+            left_time if any(r["arm"] == "LEFT" and r["execution_time"] is not None for r in results) else None,
+            right_time if any(r["arm"] == "RIGHT" and r["execution_time"] is not None for r in results) else None,
+            successful_poses,
+            "Checking = sampled state-validity calls on each individual trajectory."
+        )
 
         # Return HOME 
         if complete_success:
@@ -360,6 +414,28 @@ class DualArmMoveGroupJointPose(Node):
             self.get_logger().warning(
                 "Experiment incomplete. Final HOME skipped."
             )
+
+
+def print_trial_table(node, planning, checking, execution, total, success,
+                      left, right, poses, checking_note):
+    """Print the same eight measurements for every experiment."""
+    def seconds(value):
+        return "N/A" if value is None else f"{value:.4f} s"
+
+    rows = [
+        ("Planning time", seconds(planning)),
+        ("Collision-checking time", seconds(checking)),
+        ("Execution time", seconds(execution)),
+        ("Total completion time", seconds(total)),
+        ("Task success", "SUCCESS" if success else "FAILED"),
+        ("Left-arm movement time", seconds(left)),
+        ("Right-arm movement time", seconds(right)),
+        ("Successful poses", f"{poses}/6"),
+    ]
+    lines = ["", "================ TRIAL RESULTS ================",
+             f"{'Measurement':<27} {'Result':>14}", "-" * 46]
+    lines.extend(f"{label:<27} {value:>14}" for label, value in rows)
+    node.get_logger().info("\n".join(lines))
 
 
 def main(args=None):
