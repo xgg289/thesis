@@ -104,6 +104,8 @@ class DualArmMoveGroupJointPose(Node):
 
         mpr.pipeline_id = "ompl"
         mpr.planner_id = "RRTConnectkConfigDefault"  
+        mpr.max_velocity_scaling_factor = 1.0
+        mpr.max_acceleration_scaling_factor = 1.0
 
         mpr.start_state = self.build_start_state()
         mpr.goal_constraints = [self.build_joint_goal_constraints(joint_map)]
