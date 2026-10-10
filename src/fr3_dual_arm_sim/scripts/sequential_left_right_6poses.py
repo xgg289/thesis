@@ -100,10 +100,10 @@ class DualArmMoveGroupJointPose(Node):
         mpr = MotionPlanRequest()
         mpr.group_name = group_name
         mpr.num_planning_attempts = 5
-        mpr.allowed_planning_time = 5.0
+        mpr.allowed_planning_time = 10.0
 
         mpr.pipeline_id = "ompl"
-        mpr.planner_id = ""  
+        mpr.planner_id = "RRTConnectkConfigDefault"  
 
         mpr.start_state = self.build_start_state()
         mpr.goal_constraints = [self.build_joint_goal_constraints(joint_map)]
