@@ -9,11 +9,11 @@ install(
 )
 
 install(PROGRAMS
-  scripts/sequential_dual_arm_6poses.py
-  scripts/sequential_left_right_6poses.py
-  scripts/moveit_node.py
-  scripts/seq_dual_arm_move_group.py
-  scripts/both_arms_gripper_twice.py
+  scripts/rq1/seq_exp1.py
+  scripts/rq1/seq_exp2.py
+  scripts/rq1/seq_exp3.py
+  scripts/rq1/seq_exp4.py
+  scripts/trial.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
