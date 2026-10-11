@@ -51,6 +51,7 @@ def generate_launch_description():
             pkg_dual_arm,
             'worlds',
             'simulation_world.sdf'
+            #'simulation_world_fixed_obstacles.sdf'
         ),
         description='Path to the Gazebo world file'
     )
