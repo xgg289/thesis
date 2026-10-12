@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+#Research Question 1: One arm moves while the other holds its position.
+
 import bisect
 import copy
 import math

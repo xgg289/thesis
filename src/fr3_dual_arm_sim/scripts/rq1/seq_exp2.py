@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+#Research Question 2: Arms move in an alternating sequence.
+
 import bisect
 import copy
 import math

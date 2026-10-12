@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+#Research Question 1: Simultaneous independent planning and execution using 6 target poses (3 for each arm).
+
+
 import bisect
 import copy
 import math
@@ -331,7 +334,8 @@ class DualArmMoveGroupJointPose(Node):
             self, sum_field("planning_time"), sum_field("validation_time"),
             sum_field("execution_time"), total_time, success,
             arm_field("left_time"), arm_field("right_time"),
-            sum(r["successful_poses"] for r in results)
+            sum(r["successful_poses"] for r in results),
+            sum_field("trajectory_length")
         )
 
         # Only target pairs are counted; HOME moves are excluded.
@@ -356,7 +360,7 @@ class DualArmMoveGroupJointPose(Node):
         result = dict(planning_time=None, validation_time=None,
                       execution_time=None, left_time=None, right_time=None,
                       successful_poses=0, success=False, collision_check_passed=None,
-                      status="SETUP FAILED")
+                      trajectory_length=None, status="SETUP FAILED")
         try:
             start_state = self.build_start_state()
             scene_key = self.scene_key(self.get_scene())
@@ -373,6 +377,8 @@ class DualArmMoveGroupJointPose(Node):
             result["status"] = "PREPARATION FAILED"
             trajectories = [self.prepare_trajectory(traj, start_state)
                             for traj in trajectories]
+
+            result["trajectory_length"] = self.trajectory_length(trajectories, start_state)
 
             result["status"] = "VALIDATION FAILED"
             begin = time.perf_counter()
@@ -469,6 +475,17 @@ class DualArmMoveGroupJointPose(Node):
                 scale = max(scale, polynomial_bound(velocity) / max_v,
                             math.sqrt(polynomial_bound(acceleration) / max_a))
         return scale
+
+    def trajectory_length(self, trajectories, start_state):
+        # Length follows the timed path of all 14 arm joints.
+        start = dict(zip(start_state.joint_state.name, start_state.joint_state.position))
+        samples = [TrajectorySamples(traj, start) for traj in trajectories]
+        times = sorted(set().union(*(s.check_times(self.check_dt, self.check_joint_step)
+                                    for s in samples)))
+        if len(times) > 30000:
+            raise RuntimeError("Too many trajectory-length samples.")
+        points = [[q for sample in samples for q in sample.positions(t)] for t in times]
+        return sum(math.dist(a, b) for a, b in zip(points, points[1:]))
 
     def validate_pair(self, trajectories, start_state):
         start = dict(zip(start_state.joint_state.name, start_state.joint_state.position))
@@ -645,13 +662,14 @@ class TrajectorySamples:
 
 
 def print_trial_table(node, planning, checking, execution, total, success,
-                      left, right, poses):
+                      left, right, poses, length=None):
     def seconds(value):
         return "N/A" if value is None else f"{value:.4f} s"
 
     rows = [
         ("Planning time", seconds(planning)),
         ("Collision-checking time", seconds(checking)),
+        ("Trajectory length (14D)", "N/A" if length is None else f"{length:.4f} rad"),
         ("Execution time", seconds(execution)),
         ("Total completion time", seconds(total)),
         ("Task success", "SUCCESS" if success else "FAILED"),
