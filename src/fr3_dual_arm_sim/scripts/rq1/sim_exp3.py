@@ -277,7 +277,6 @@ class DualArmMoveGroupJointPose(Node):
         self.enable_cross_arm_checks()
 
         # HOME before trial.
-        self.get_logger().info("Preparing initial HOME position...")
         if not self.move_home():
             self.get_logger().error("Initial HOME failed.")
             return
@@ -293,7 +292,6 @@ class DualArmMoveGroupJointPose(Node):
         total_start = time.perf_counter()
 
         for pose_name, left_target, right_target in movements:
-            self.get_logger().info(f"Starting {pose_name}...")
             result = self.move_pair(left_target, right_target)
             results.append(result)
 
@@ -309,10 +307,7 @@ class DualArmMoveGroupJointPose(Node):
         # Arms return HOME if all targets are completed.
         try:
             if complete_success:
-                self.get_logger().info("Six poses complete. Returning both arms HOME...")
-                if self.move_home():
-                    self.get_logger().info("Both arms returned HOME successfully.")
-                else:
+                if not self.move_home():
                     self.get_logger().error("Final HOME failed (outside the timed task).")
             else:
                 self.get_logger().warning("Experiment incomplete. Final HOME skipped.")

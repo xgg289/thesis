@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#Research Question 2: Arms move in an alternating sequence.
+#Research Question 1: Arms move in an alternating sequence.
 
 import bisect
 import copy
@@ -276,27 +276,25 @@ class DualArmMoveGroupJointPose(Node):
         self.enable_cross_arm_checks()
 
         # HOME before trial.
-        self.get_logger().info("Preparing initial HOME position...")
         if not self.move_home():
             self.get_logger().error("Initial HOME failed.")
             return
 
         # The arms take turns, one pose at a time.
         movements = [
-            ("LEFT", "pose1", "left_fr3_arm", self.left_pose1),
-            ("RIGHT", "pose4", "right_fr3_arm", self.right_pose4),
-            ("LEFT", "pose2", "left_fr3_arm", self.left_pose2),
-            ("RIGHT", "pose5", "right_fr3_arm", self.right_pose5),
-            ("LEFT", "pose3", "left_fr3_arm", self.left_pose3),
-            ("RIGHT", "pose6", "right_fr3_arm", self.right_pose6),
+            ("LEFT", "pose1", self.left_pose1),
+            ("RIGHT", "pose4", self.right_pose4),
+            ("LEFT", "pose2", self.left_pose2),
+            ("RIGHT", "pose5", self.right_pose5),
+            ("LEFT", "pose3", self.left_pose3),
+            ("RIGHT", "pose6", self.right_pose6),
         ]
 
         results = []
         total_start = time.perf_counter()
 
-        for arm, pose_name, group, target in movements:
+        for arm, pose_name, target in movements:
             side = arm.lower()
-            self.get_logger().info(f"Starting {arm} {pose_name}...")
             result = self.move_pair(
                 target if side == "left" else self.left_home,
                 target if side == "right" else self.right_home,
@@ -315,10 +313,7 @@ class DualArmMoveGroupJointPose(Node):
         # Both arms return HOME after all six target moves succeed.
         try:
             if complete_success:
-                self.get_logger().info("Six poses complete. Returning both arms HOME...")
-                if self.move_home():
-                    self.get_logger().info("Both arms returned HOME successfully.")
-                else:
+                if not self.move_home():
                     self.get_logger().error("Final HOME failed (outside the timed task).")
             else:
                 self.get_logger().warning("Experiment incomplete. Final HOME skipped.")
