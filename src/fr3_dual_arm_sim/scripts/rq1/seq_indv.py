@@ -335,15 +335,18 @@ class DualArmMoveGroupJointPose(Node):
         total_start = time.perf_counter()
 
         for arm, pose_name, target in movements:
+            self.get_logger().info(f"Planning {arm.lower()} arm target {pose_name}")
             side = arm.lower()
             result = self.move_pair(
                 target if side == "left" else self.left_home,
                 target if side == "right" else self.right_home,
                 active_side=side)
             results.append(result)
+            if result["success"]:
+                self.get_logger().info(f"{pose_name} completed successfully")
 
             if not result["success"]:
-                self.get_logger().error(f"{pose_name} failed. Stopping sequence.")
+                self.get_logger().error(f"{pose_name} failed: {result['status']}. Stopping sequence.")
                 break
 
         # Task time excludes return HOME.
