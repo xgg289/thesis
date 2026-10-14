@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-#Research Question 1: Simultaneous independent planning and execution using 6 target poses (3 for each arm).
-
+#Research Question 1: Independent planning with sequential execution.
 
 import bisect
 import copy
@@ -18,16 +17,17 @@ from sensor_msgs.msg import JointState
 from control_msgs.action import FollowJointTrajectory
 from control_msgs.msg import JointTolerance
 from action_msgs.msg import GoalStatus
-from moveit_msgs.srv import GetMotionPlan, GetStateValidity, GetPlanningScene, ApplyPlanningScene
+from moveit_msgs.srv import (GetMotionPlan, GetStateValidity, GetPlanningScene,
+                             ApplyPlanningScene, SetPlannerParams, GetPlannerParams)
 from moveit_msgs.msg import (MotionPlanRequest, Constraints, JointConstraint, RobotState,
                              PlanningSceneComponents)
 
 
 class DualArmMoveGroupJointPose(Node):
-    """Each arm is planned separately for three target pairs."""
+    """One arm moves while the other holds its position."""
 
     def __init__(self):
-        super().__init__("independent_simultaneous_planning")
+        super().__init__("independent_sequential")
         self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
         # Trial uses simulation_world.sdf.
         self.latest_joint_state = None
@@ -76,22 +76,35 @@ class DualArmMoveGroupJointPose(Node):
     def _js_cb(self, msg: JointState):
         self.latest_joint_state = msg
 
-    def wait_for_joint_state(self, timeout_sec=10.0) -> bool:
-        # Planning waits for joint positions and stopped arms.
+    def wait_for_joint_state(self, timeout_sec=15.0) -> bool:
+        # Arms waiting 0.3 seconds before planning.
         self.latest_joint_state = None
         required = set(self.left_home) | set(self.right_home)
         t0 = time.monotonic()
+        stable_since, reference, previous = None, None, None
         while rclpy.ok() and time.monotonic() - t0 < timeout_sec:
-            rclpy.spin_once(self, timeout_sec=0.1)
+            rclpy.spin_once(self, timeout_sec=0.05)
             js = self.latest_joint_state
-            if js is None or len(js.name) != len(js.position):
+            if js is None or js is previous:
                 continue
-            if (not required.issubset(js.name) or len(js.velocity) != len(js.name)
+            previous = js
+            if (len(js.name) != len(js.position) or len(set(js.name)) != len(js.name)
+                    or not required.issubset(js.name) or len(js.velocity) != len(js.name)
                     or not all(math.isfinite(value) for value in js.position)):
+                stable_since, reference = None, None
                 continue
-            if any(not math.isfinite(v) or abs(v) > 0.01 for v in js.velocity):
+            joints = dict(zip(js.name, js.position))
+            velocities = dict(zip(js.name, js.velocity))
+            if any(not math.isfinite(velocities[n]) or abs(velocities[n]) > 0.005
+                   for n in required):
+                stable_since, reference = None, None
                 continue
-            return True
+            now = time.monotonic()
+            if reference is None or any(abs(joints[n] - reference[n]) > 0.0005
+                                        for n in required):
+                stable_since, reference = now, joints
+            elif now - stable_since >= 0.3:
+                return True
         return False
 
     def wait_for_servers(self):
@@ -114,6 +127,56 @@ class DualArmMoveGroupJointPose(Node):
                     raise RuntimeError("Controller interpolation_method must be 'splines'.")
             finally:
                 self.destroy_client(params)
+
+    def configure_planner_sampling(self):
+        # Every condition uses the same planner sampling setting.
+        setter = self.create_client(SetPlannerParams, "/set_planner_params")
+        getter = self.create_client(GetPlannerParams, "/get_planner_params")
+        try:
+            if not setter.wait_for_service(timeout_sec=10.0) or not getter.wait_for_service(timeout_sec=10.0):
+                raise RuntimeError("OMPL planner-parameter services are unavailable.")
+            for group in ("left_fr3_arm", "right_fr3_arm"):
+                request = SetPlannerParams.Request()
+                request.pipeline_id = "ompl"
+                request.planner_config = "RRTConnectkConfigDefault"
+                request.group = group
+                request.replace = False
+                request.params.keys = ["longest_valid_segment_fraction"]
+                request.params.values = ["0.0005"]
+                self.wait(setter.call_async(request))
+                check = GetPlannerParams.Request()
+                check.pipeline_id = request.pipeline_id
+                check.planner_config = request.planner_config
+                check.group = group
+                params = self.wait(getter.call_async(check)).params
+                values = dict(zip(params.keys, params.values))
+                if abs(float(values.get("longest_valid_segment_fraction", "nan")) - 0.0005) > 1e-9 or not math.isfinite(float(values.get("longest_valid_segment_fraction", "nan"))):
+                    raise RuntimeError(f"Could not verify OMPL collision sampling for {group}.")
+        finally:
+            self.destroy_client(setter)
+            self.destroy_client(getter)
+
+    def state_valid(self, state, constraints=None):
+        req = GetStateValidity.Request()
+        req.group_name = ""  # Collision check includes both arms and hands.
+        req.robot_state = state
+        if constraints is not None:
+            req.constraints = constraints
+        response = self.wait(self.validity_client.call_async(req), 10.0)
+        return response.valid
+
+    def pair_samples(self, trajectories, state):
+        start = dict(zip(state.joint_state.name, state.joint_state.position))
+        samples = [TrajectorySamples(t, start) for t in trajectories]
+        times = sorted(set().union(*(s.check_times(self.check_dt, self.check_joint_step)
+                                    for s in samples)))
+        if len(times) > 30000:
+            raise RuntimeError("Too many collision samples.")
+        return samples, times
+
+    def goals_reached(self, state, left, right):
+        return sum(self.state_valid(state, self.build_joint_goal_constraints(target))
+                   for target in (left, right))
 
     def build_start_state(self) -> RobotState:
         if not self.wait_for_joint_state():
@@ -160,25 +223,6 @@ class DualArmMoveGroupJointPose(Node):
         return traj
 
     def execute_trajectory(self, trajectories):
-        # Each arm is timed from sending its goal to getting result.
-        self.arm_times = [None, None]
-        self.arm_success = [False, False]
-        arm_times = self.arm_times
-        arm_success = self.arm_success
-        sent_at = []
-
-        def record_result(future, arm):
-            if arm_times[arm] is not None:
-                return
-            arm_times[arm] = time.perf_counter() - sent_at[arm]
-            if future.cancelled() or future.exception() is not None:
-                return
-            result = future.result()
-            arm_success[arm] = (result is not None
-                                and result.status == GoalStatus.STATUS_SUCCEEDED
-                                and result.result.error_code == 0)
-
-        # Delay gives both controllers time to accept goals.
         margin = 0.1
         if not math.isfinite(self.start_delay) or self.start_delay <= margin:
             raise RuntimeError("Start delay must be greater than 0.1 seconds.")
@@ -206,7 +250,6 @@ class DualArmMoveGroupJointPose(Node):
                 for name in trajectory.joint_names:
                     goal.path_tolerance.append(JointTolerance(name=name, position=0.05))
                     goal.goal_tolerance.append(JointTolerance(name=name, position=0.01))
-                sent_at.append(time.perf_counter())
                 future = client.send_goal_async(goal)
                 sends.append(future)
                 future.add_done_callback(late_response)
@@ -222,8 +265,6 @@ class DualArmMoveGroupJointPose(Node):
                     self.get_clock().now().nanoseconds >= accept_before):
                 raise RuntimeError("Too little time remains before the common start.")
             results = [h.get_result_async() for h in handles]
-            for arm, future in enumerate(results):
-                future.add_done_callback(lambda f, arm=arm: record_result(f, arm))
             duration = max(seconds(t.points[-1].time_from_start) for t in trajectories)
             deadline = time.monotonic() + 5 * (duration + self.start_delay) + 30
             while True:
@@ -238,9 +279,8 @@ class DualArmMoveGroupJointPose(Node):
                                                       trajectory.points[0].positions):
                                 if name not in actual or abs(actual[name] - position) > 0.005:
                                     raise RuntimeError("Arm moved before the scheduled start.")
-                for arm, f in enumerate(results):
+                for f in results:
                     if f.done():
-                        record_result(f, arm)
                         result = f.result()
                         if (result is None or result.status != GoalStatus.STATUS_SUCCEEDED
                                 or result.result.error_code != 0):
@@ -274,25 +314,32 @@ class DualArmMoveGroupJointPose(Node):
         self.wait_for_servers()
 
         self.load_joint_limits()
+        self.configure_planner_sampling()
         self.enable_cross_arm_checks()
 
-        # HOME before trial.
         if not self.move_home():
             self.get_logger().error("Initial HOME failed.")
             return
 
-        # 3 target pairs.
+        # The left arm finishes its three poses before right arm.
         movements = [
-            ("pose1+4", self.left_pose1, self.right_pose4),
-            ("pose2+5", self.left_pose2, self.right_pose5),
-            ("pose3+6", self.left_pose3, self.right_pose6),
+            ("LEFT", "pose1", self.left_pose1),
+            ("LEFT", "pose2", self.left_pose2),
+            ("LEFT", "pose3", self.left_pose3),
+            ("RIGHT", "pose4", self.right_pose4),
+            ("RIGHT", "pose5", self.right_pose5),
+            ("RIGHT", "pose6", self.right_pose6),
         ]
 
         results = []
         total_start = time.perf_counter()
 
-        for pose_name, left_target, right_target in movements:
-            result = self.move_pair(left_target, right_target)
+        for arm, pose_name, target in movements:
+            side = arm.lower()
+            result = self.move_pair(
+                target if side == "left" else self.left_home,
+                target if side == "right" else self.right_home,
+                active_side=side)
             results.append(result)
 
             if not result["success"]:
@@ -304,7 +351,7 @@ class DualArmMoveGroupJointPose(Node):
         complete_success = (len(results) == len(movements)
                             and all(r["success"] for r in results))
 
-        # Arms return HOME if all targets are completed.
+        # Both arms return HOME after all six target moves succeed.
         try:
             if complete_success:
                 if not self.move_home():
@@ -319,30 +366,11 @@ class DualArmMoveGroupJointPose(Node):
             values = [r[field] for r in results if r[field] is not None]
             return sum(values) if values else None
 
-        def arm_field(field):
-            if any(r["execution_time"] is not None and r[field] is None
-                   for r in results):
-                return None
-            return sum_field(field)
-
         print_trial_table(
             self, sum_field("planning_time"), sum_field("validation_time"),
             sum_field("execution_time"), total_time, success,
-            arm_field("left_time"), arm_field("right_time"),
-            sum(r["successful_poses"] for r in results),
-            sum_field("trajectory_length")
+            sum(r["successful_poses"] for r in results)
         )
-
-        # Only target pairs are counted; HOME moves are excluded.
-        checks = [r["collision_check_passed"] for r in results
-                  if r["collision_check_passed"] is not None]
-        if checks:
-            passed = sum(checks)
-            self.get_logger().info(
-                f"Collision-check passes: {passed}/{len(checks)} "
-                f"({100.0 * passed / len(checks):.1f}%)")
-        else:
-            self.get_logger().info("Collision-check passes: N/A (no pairs checked).")
 
     def wait(self, future, timeout=15.0):
         rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
@@ -350,55 +378,78 @@ class DualArmMoveGroupJointPose(Node):
             raise RuntimeError("ROS request timed out or returned no result.")
         return future.result()
 
-    def move_pair(self, left_target, right_target):
-        # Both paths are planned, checked together, then executed.
-        result = dict(planning_time=None, validation_time=None,
-                      execution_time=None, left_time=None, right_time=None,
-                      successful_poses=0, success=False, collision_check_passed=None,
-                      trajectory_length=None, status="SETUP FAILED")
+    def move_pair(self, left_target, right_target, active_side=None):
+        result = dict(planning_time=None, validation_time=None, execution_time=None,
+                      successful_poses=0, success=False, status="SETUP FAILED")
         try:
             start_state = self.build_start_state()
             scene_key = self.scene_key(self.get_scene())
-
+            # The inactive arm keeps its measured position, not its HOME target.
+            positions = dict(zip(start_state.joint_state.name, start_state.joint_state.position))
+            if active_side == "left":
+                right_target = {name: positions[name] for name in self.right_home}
+            elif active_side == "right":
+                left_target = {name: positions[name] for name in self.left_home}
+            elif active_side is not None:
+                raise ValueError("Active side must be left, right or None.")
             result["status"] = "PLANNING FAILED"
             begin = time.perf_counter()
             try:
                 trajectories = [
-                    self.plan_for_group("left_fr3_arm", left_target, start_state),
-                    self.plan_for_group("right_fr3_arm", right_target, start_state)]
+                    self.plan_for_group(f"{side}_fr3_arm", target, start_state)
+                    for side, target in (("left", left_target), ("right", right_target))
+                    if active_side is None or side == active_side]
             finally:
                 result["planning_time"] = time.perf_counter() - begin
 
             result["status"] = "PREPARATION FAILED"
-            trajectories = [self.prepare_trajectory(traj, start_state)
-                            for traj in trajectories]
+            trajectories = [self.prepare_trajectory(t, start_state) for t in trajectories]
+            if active_side is not None:
+                # The other arm holds its measured position for the whole move.
+                moving = trajectories[0]
+                joints = self.right_home if active_side == "left" else self.left_home
+                hold = copy.deepcopy(moving)
+                hold.joint_names = list(joints)
+                for point in hold.points:
+                    point.positions = [positions[name] for name in joints]
+                    point.velocities = [0.0] * 7
+                    point.accelerations = [0.0] * 7
+                    point.effort = []
+                trajectories = ([moving, hold] if active_side == "left"
+                                else [hold, moving])
 
-            result["trajectory_length"] = self.trajectory_length(trajectories, start_state)
-
-            result["status"] = "VALIDATION FAILED"
+            result["status"] = "COLLISION CHECK FAILED"
             begin = time.perf_counter()
-            # A pair passes only when every collision sample is valid.
-            result["collision_check_passed"] = False
             try:
-                self.validate_pair(trajectories, start_state)
-                result["collision_check_passed"] = True
+                # Checking includes spline samples and endpoint goal checks.
+                samples, times = self.pair_samples(trajectories, start_state)
+                names = [name for traj in trajectories for name in traj.joint_names]
+                points = [[q for sample in samples for q in sample.positions(t)] for t in times]
+                valid_pair, state = self.validate_pair(points, names, start_state)
+                if not valid_pair:
+                    raise RuntimeError("The planned pair failed collision checking.")
+                if self.goals_reached(state, left_target, right_target) != 2:
+                    raise RuntimeError("Planned endpoints do not satisfy both targets.")
             finally:
                 result["validation_time"] = time.perf_counter() - begin
 
             result["status"] = "PRE-EXECUTION CHECK FAILED"
             if self.scene_key(self.get_scene()) != scene_key:
-                raise RuntimeError("Planning scene changed. Pair will not execute.")
+                raise RuntimeError("Planning scene changed; pair will not execute.")
             self.check_start_unchanged(start_state)
-
             result["status"] = "EXECUTION FAILED"
             begin = time.perf_counter()
             try:
-                result["success"] = self.execute_trajectory(trajectories)
+                self.execute_trajectory(trajectories)
             finally:
                 result["execution_time"] = time.perf_counter() - begin
-                result["left_time"], result["right_time"] = self.arm_times
-                result["successful_poses"] = sum(self.arm_success)
-            result["status"] = "SUCCESS" if result["success"] else "EXECUTION FAILED"
+            result["status"] = "GOAL CHECK FAILED"
+            result["successful_poses"] = self.goals_reached(self.build_start_state(), left_target, right_target)
+            result["success"] = result["successful_poses"] == 2
+            if active_side is not None:
+                # Holding other arm does not count as a target pose.
+                result["successful_poses"] = int(result["success"])
+            result["status"] = "SUCCESS" if result["success"] else "GOAL CHECK FAILED"
         except Exception as error:
             self.get_logger().error(f"{result['status']}: {error}")
         return result
@@ -471,40 +522,17 @@ class DualArmMoveGroupJointPose(Node):
                             math.sqrt(polynomial_bound(acceleration) / max_a))
         return scale
 
-    def trajectory_length(self, trajectories, start_state):
-        # Length follows the timed path of all 14 arm joints.
-        start = dict(zip(start_state.joint_state.name, start_state.joint_state.position))
-        samples = [TrajectorySamples(traj, start) for traj in trajectories]
-        times = sorted(set().union(*(s.check_times(self.check_dt, self.check_joint_step)
-                                    for s in samples)))
-        if len(times) > 30000:
-            raise RuntimeError("Too many trajectory-length samples.")
-        points = [[q for sample in samples for q in sample.positions(t)] for t in times]
-        return sum(math.dist(a, b) for a, b in zip(points, points[1:]))
 
-    def validate_pair(self, trajectories, start_state):
-        start = dict(zip(start_state.joint_state.name, start_state.joint_state.position))
-        samples = [TrajectorySamples(traj, start) for traj in trajectories]
-        times = sorted(set().union(*(s.check_times(self.check_dt, self.check_joint_step)
-                                    for s in samples)))
-        if len(times) > 30000:
-            raise RuntimeError("Too many collision samples.")
-        req = GetStateValidity.Request()
-        req.group_name = ""  # Collision check includes both arms and hands.
-        req.robot_state = copy.deepcopy(start_state)
-        names = list(req.robot_state.joint_state.name)
-        indices = {name: i for i, name in enumerate(names)}
+    def validate_pair(self, points, names, start_state):
         # Both arm positions are checked at matching times.
-        for t in times:
-            positions = list(start_state.joint_state.position)
-            for sample in samples:
-                for name, value in zip(sample.trajectory.joint_names, sample.positions(t)):
-                    positions[indices[name]] = value
-            req.robot_state.joint_state.position = positions
-            result = self.wait(self.validity_client.call_async(req), 10.0)
-            if not result.valid:
-                contacts = [(c.contact_body_1, c.contact_body_2) for c in result.contacts]
-                raise RuntimeError(f"Pair invalid at {t:.3f} s. Contacts: {contacts}")
+        for values in points:
+            state = copy.deepcopy(start_state)
+            joints = dict(zip(state.joint_state.name, state.joint_state.position))
+            joints.update(zip(names, values))
+            state.joint_state.position = [joints[n] for n in state.joint_state.name]
+            if not self.state_valid(state):
+                return False, state
+        return True, state
 
     def check_start_unchanged(self, start_state):
         current = self.build_start_state()
@@ -656,20 +684,16 @@ class TrajectorySamples:
         return times
 
 
-def print_trial_table(node, planning, checking, execution, total, success,
-                      left, right, poses, length=None):
+def print_trial_table(node, planning, checking, execution, total, success, poses):
     def seconds(value):
         return "N/A" if value is None else f"{value:.4f} s"
 
     rows = [
         ("Planning time", seconds(planning)),
         ("Collision-checking time", seconds(checking)),
-        ("Trajectory length (14D)", "N/A" if length is None else f"{length:.4f} rad"),
         ("Execution time", seconds(execution)),
         ("Total completion time", seconds(total)),
         ("Task success", "SUCCESS" if success else "FAILED"),
-        ("Left-arm movement time", seconds(left)),
-        ("Right-arm movement time", seconds(right)),
         ("Successful poses", f"{poses}/6"),
     ]
     lines = ["", "================ TRIAL RESULTS ================",
