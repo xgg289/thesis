@@ -247,7 +247,7 @@ class DualArmMoveGroupJointPose(Node):
                 goal.trajectory = copy.deepcopy(trajectory)
                 # Both arms have same start time.
                 goal.trajectory.header.stamp = start.to_msg()
-                goal.goal_time_tolerance = Duration(seconds=2.0).to_msg()
+                goal.goal_time_tolerance = Duration(seconds=4.0).to_msg()
                 for name in trajectory.joint_names:
                     goal.path_tolerance.append(JointTolerance(name=name, position=0.05))
                     goal.goal_tolerance.append(JointTolerance(name=name, position=0.01))
