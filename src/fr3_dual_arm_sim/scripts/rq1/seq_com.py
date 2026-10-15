@@ -381,7 +381,8 @@ class DualArmMoveGroupJointPose(Node):
         print_trial_table(
             self, sum_field("planning_time"), sum_field("validation_time"),
             sum_field("execution_time"), total_time, success,
-            sum(r["successful_poses"] for r in results)
+            sum(r["successful_poses"] for r in results),
+            sum(r["valid_plans"] for r in results), len(results)
         )
 
     def wait(self, future, timeout=15.0):
@@ -392,7 +393,7 @@ class DualArmMoveGroupJointPose(Node):
 
     def move_pair(self, left_target, right_target, active_side=None):
         result = dict(planning_time=None, validation_time=None, execution_time=None,
-                      successful_poses=0, success=False, status="SETUP FAILED")
+                      valid_plans=0, successful_poses=0, success=False, status="SETUP FAILED")
         try:
             start_state = self.build_start_state()
             scene_key = self.scene_key(self.get_scene())
@@ -437,6 +438,7 @@ class DualArmMoveGroupJointPose(Node):
                     raise RuntimeError("The planned pair failed collision checking.")
                 if self.goals_reached(state, left_target, right_target) != 2:
                     raise RuntimeError("Planned endpoints do not satisfy both targets.")
+                result["valid_plans"] = 1
             finally:
                 result["validation_time"] = time.perf_counter() - begin
 
@@ -729,7 +731,8 @@ class TrajectorySamples:
         return times
 
 
-def print_trial_table(node, planning, checking, execution, total, success, poses):
+def print_trial_table(node, planning, checking, execution, total, success, poses,
+                      valid_plans=0, attempted_stages=0):
     def seconds(value):
         return "N/A" if value is None else f"{value:.4f} s"
 
@@ -740,6 +743,7 @@ def print_trial_table(node, planning, checking, execution, total, success, poses
         ("Total completion time", seconds(total)),
         ("Task success", "SUCCESS" if success else "FAILED"),
         ("Successful poses", f"{poses}/6"),
+        ("Collision-valid stages", f"{valid_plans}/{attempted_stages}"),
     ]
     lines = ["", "================ TRIAL RESULTS ================",
              f"{'Measurement':<27} {'Result':>14}", "-" * 46]
