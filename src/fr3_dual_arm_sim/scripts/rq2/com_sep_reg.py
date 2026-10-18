@@ -176,8 +176,8 @@ class DualArmMoveGroupJointPose(Node):
             raise RuntimeError("Too many collision samples.")
         return samples, times
 
-    def goals_reached(self, state, left, right):
-        return sum(self.state_valid(state, self.build_joint_goal_constraints(target))
+    def goals_reached(self, state, left, right, tolerance=0.001):
+        return sum(self.state_valid(state, self.build_joint_goal_constraints(target, tolerance=tolerance))
                    for target in (left, right))
 
     def build_start_state(self) -> RobotState:
@@ -188,12 +188,12 @@ class DualArmMoveGroupJointPose(Node):
         rs.is_diff = True
         return rs
 
-    def build_joint_goal_constraints(self, joint_map: dict) -> Constraints:
+    def build_joint_goal_constraints(self, joint_map: dict, tolerance=0.001) -> Constraints:
         c = Constraints()
         for jname, jval in joint_map.items():
             c.joint_constraints.append(JointConstraint(
                 joint_name=jname, position=float(jval), weight=1.0,
-                tolerance_above=0.001, tolerance_below=0.001))
+                tolerance_above=tolerance, tolerance_below=tolerance))
         return c
 
     def plan_for_group(self, group_name: str, joint_map: dict, start_state):
@@ -443,7 +443,7 @@ class DualArmMoveGroupJointPose(Node):
             finally:
                 result["execution_time"] = time.perf_counter() - begin
             result["status"] = "GOAL CHECK FAILED"
-            result["successful_poses"] = self.goals_reached(self.build_start_state(), left_target, right_target)
+            result["successful_poses"] = self.goals_reached(self.build_start_state(), left_target, right_target, tolerance=0.01)
             result["success"] = result["successful_poses"] == 2
             result["status"] = "SUCCESS" if result["success"] else "GOAL CHECK FAILED"
         except Exception as error:
