@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#Research Question 1: Independent planning with sequential execution.
+#Research Question 1: Independent planning with sequential execution (Set 1).
 
 import bisect
 import copy
@@ -27,7 +27,7 @@ class DualArmMoveGroupJointPose(Node):
     """One arm moves while the other holds its position."""
 
     def __init__(self):
-        super().__init__("independent_sequential")
+        super().__init__("independent_sequential_1")
         self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
         # Trial uses simulation_world.sdf.
         self.latest_joint_state = None

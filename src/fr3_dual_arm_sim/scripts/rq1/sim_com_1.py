@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-#Research Question 1: Independent planning with simultaneous execution.
-
+#Research Question 1: Combined planning with simultaneous execution (Set 1).
 
 import bisect
 import copy
@@ -25,10 +24,10 @@ from moveit_msgs.msg import (MotionPlanRequest, Constraints, JointConstraint, Ro
 
 
 class DualArmMoveGroupJointPose(Node):
-    """Each arm is planned separately for three target pairs."""
+    """Both arms share one plan for each pose pair."""
 
     def __init__(self):
-        super().__init__("independent_simultaneous")
+        super().__init__("combined_simultaneous_1")
         self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
         # Trial uses simulation_world.sdf.
         self.latest_joint_state = None
@@ -136,7 +135,7 @@ class DualArmMoveGroupJointPose(Node):
         try:
             if not setter.wait_for_service(timeout_sec=10.0) or not getter.wait_for_service(timeout_sec=10.0):
                 raise RuntimeError("OMPL planner-parameter services are unavailable.")
-            for group in ("left_fr3_arm", "right_fr3_arm"):
+            for group in ("both_arms",):
                 request = SetPlannerParams.Request()
                 request.pipeline_id = "ompl"
                 request.planner_config = "RRTConnectkConfigDefault"
@@ -179,6 +178,8 @@ class DualArmMoveGroupJointPose(Node):
         return sum(self.state_valid(state, self.build_joint_goal_constraints(target, tolerance=tolerance))
                    for target in (left, right))
 
+
+
     def build_start_state(self) -> RobotState:
         if not self.wait_for_joint_state():
             raise RuntimeError("No complete, stationary joint state received.")
@@ -207,7 +208,7 @@ class DualArmMoveGroupJointPose(Node):
         mpr.max_velocity_scaling_factor = self.velocity_scale
         mpr.max_acceleration_scaling_factor = self.acceleration_scale
 
-        # Both plans use same starting positions.
+        # Plan starts from the measured joint positions.
         mpr.start_state = copy.deepcopy(start_state)
         mpr.goal_constraints = [self.build_joint_goal_constraints(joint_map)]
         req.motion_plan_request = mpr
@@ -218,9 +219,9 @@ class DualArmMoveGroupJointPose(Node):
             raise RuntimeError(f"Planning failed for {group_name}, error_code={res.error_code.val}")
 
         traj = res.trajectory.joint_trajectory
-        if (len(traj.joint_names) != 7 or set(traj.joint_names) != set(joint_map)
+        if (len(traj.joint_names) != len(joint_map) or set(traj.joint_names) != set(joint_map)
                 or not traj.points):
-            raise RuntimeError("Incomplete arm trajectory.")
+            raise RuntimeError("Incomplete combined trajectory.")
         return traj
 
     def execute_trajectory(self, trajectories):
@@ -318,11 +319,12 @@ class DualArmMoveGroupJointPose(Node):
         self.configure_planner_sampling()
         self.enable_cross_arm_checks()
 
+        # HOME before trial.
         if not self.move_home():
             self.get_logger().error("Initial HOME failed.")
             return
 
-        # 3 target pairs.
+        # Three target pairs; both arms move together.
         movements = [
             ("pose1+4", self.left_pose1, self.right_pose4),
             ("pose2+5", self.left_pose2, self.right_pose5),
@@ -385,14 +387,16 @@ class DualArmMoveGroupJointPose(Node):
             result["status"] = "PLANNING FAILED"
             begin = time.perf_counter()
             try:
-                trajectories = [
-                    self.plan_for_group("left_fr3_arm", left_target, start_state),
-                    self.plan_for_group("right_fr3_arm", right_target, start_state)]
+                trajectory = self.plan_for_group(
+                    "both_arms", {**left_target, **right_target}, start_state)
             finally:
                 result["planning_time"] = time.perf_counter() - begin
 
             result["status"] = "PREPARATION FAILED"
-            trajectories = [self.prepare_trajectory(t, start_state) for t in trajectories]
+            # Both arms keep the same timing when the path is slowed.
+            trajectory = self.prepare_trajectory(trajectory, start_state)
+            trajectories = self.split_trajectory(trajectory)
+
             result["status"] = "COLLISION CHECK FAILED"
             begin = time.perf_counter()
             try:
@@ -413,19 +417,37 @@ class DualArmMoveGroupJointPose(Node):
             if self.scene_key(self.get_scene()) != scene_key:
                 raise RuntimeError("Planning scene changed; pair will not execute.")
             self.check_start_unchanged(start_state)
+
             result["status"] = "EXECUTION FAILED"
             begin = time.perf_counter()
             try:
                 self.execute_trajectory(trajectories)
             finally:
                 result["execution_time"] = time.perf_counter() - begin
+
             result["status"] = "GOAL CHECK FAILED"
-            result["successful_poses"] = self.goals_reached(self.build_start_state(), left_target, right_target, tolerance=0.01)
+            result["successful_poses"] = self.goals_reached(
+                self.build_start_state(), left_target, right_target, tolerance=0.01)
             result["success"] = result["successful_poses"] == 2
             result["status"] = "SUCCESS" if result["success"] else "GOAL CHECK FAILED"
         except Exception as error:
             self.get_logger().error(f"{result['status']}: {error}")
         return result
+
+    def split_trajectory(self, trajectory):
+        # Each controller gets its joints with the original timing.
+        trajectories = []
+        for joints in (self.left_home, self.right_home):
+            indices = [trajectory.joint_names.index(name) for name in joints]
+            arm = copy.deepcopy(trajectory)
+            arm.joint_names = list(joints)
+            for point in arm.points:
+                for field in ("positions", "velocities", "accelerations", "effort"):
+                    values = getattr(point, field)
+                    if values:
+                        setattr(point, field, [values[i] for i in indices])
+            trajectories.append(arm)
+        return trajectories
 
     def load_joint_limits(self):
         names = list(self.left_home) + list(self.right_home)

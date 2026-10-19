@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-#Research Question 1: Combined planning with sequential execution.
+#Research Question 1: Independent planning with simultaneous execution (Set 1).
+
 
 import bisect
 import copy
@@ -24,10 +25,10 @@ from moveit_msgs.msg import (MotionPlanRequest, Constraints, JointConstraint, Ro
 
 
 class DualArmMoveGroupJointPose(Node):
-    """One arm moves while the other holds its position."""
+    """Each arm is planned separately for three target pairs."""
 
     def __init__(self):
-        super().__init__("combined_sequential")
+        super().__init__("independent_simultaneous_1")
         self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
         # Trial uses simulation_world.sdf.
         self.latest_joint_state = None
@@ -135,7 +136,7 @@ class DualArmMoveGroupJointPose(Node):
         try:
             if not setter.wait_for_service(timeout_sec=10.0) or not getter.wait_for_service(timeout_sec=10.0):
                 raise RuntimeError("OMPL planner-parameter services are unavailable.")
-            for group in ("both_arms",):
+            for group in ("left_fr3_arm", "right_fr3_arm"):
                 request = SetPlannerParams.Request()
                 request.pipeline_id = "ompl"
                 request.planner_config = "RRTConnectkConfigDefault"
@@ -194,8 +195,7 @@ class DualArmMoveGroupJointPose(Node):
                 tolerance_above=tolerance, tolerance_below=tolerance))
         return c
 
-    def plan_for_group(self, group_name: str, joint_map: dict, start_state,
-                       held_positions=None):
+    def plan_for_group(self, group_name: str, joint_map: dict, start_state):
         req = GetMotionPlan.Request()
 
         mpr = MotionPlanRequest()
@@ -207,17 +207,9 @@ class DualArmMoveGroupJointPose(Node):
         mpr.max_velocity_scaling_factor = self.velocity_scale
         mpr.max_acceleration_scaling_factor = self.acceleration_scale
 
-        # Plan starts from the measured joint positions.
+        # Both plans use same starting positions.
         mpr.start_state = copy.deepcopy(start_state)
         mpr.goal_constraints = [self.build_joint_goal_constraints(joint_map)]
-        if held_positions is not None:
-            # Keep the inactive arm near its measured position during combined planning.
-            holding = Constraints()
-            for name, position in held_positions.items():
-                holding.joint_constraints.append(JointConstraint(
-                    joint_name=name, position=float(position), weight=1.0,
-                    tolerance_above=0.005, tolerance_below=0.005))
-            mpr.path_constraints = holding
         req.motion_plan_request = mpr
 
         future = self.plan_client.call_async(req)
@@ -226,9 +218,9 @@ class DualArmMoveGroupJointPose(Node):
             raise RuntimeError(f"Planning failed for {group_name}, error_code={res.error_code.val}")
 
         traj = res.trajectory.joint_trajectory
-        if (len(traj.joint_names) != len(joint_map) or set(traj.joint_names) != set(joint_map)
+        if (len(traj.joint_names) != 7 or set(traj.joint_names) != set(joint_map)
                 or not traj.points):
-            raise RuntimeError("Incomplete combined trajectory.")
+            raise RuntimeError("Incomplete arm trajectory.")
         return traj
 
     def execute_trajectory(self, trajectories):
@@ -330,26 +322,19 @@ class DualArmMoveGroupJointPose(Node):
             self.get_logger().error("Initial HOME failed.")
             return
 
-        # The left arm finishes its three poses before right arm.
+        # 3 target pairs.
         movements = [
-            ("LEFT", "pose1", self.left_pose1),
-            ("LEFT", "pose2", self.left_pose2),
-            ("LEFT", "pose3", self.left_pose3),
-            ("RIGHT", "pose4", self.right_pose4),
-            ("RIGHT", "pose5", self.right_pose5),
-            ("RIGHT", "pose6", self.right_pose6),
+            ("pose1+4", self.left_pose1, self.right_pose4),
+            ("pose2+5", self.left_pose2, self.right_pose5),
+            ("pose3+6", self.left_pose3, self.right_pose6),
         ]
 
         results = []
         total_start = time.perf_counter()
 
-        for arm, pose_name, target in movements:
-            self.get_logger().info(f"Planning {arm.lower()} arm target {pose_name}")
-            side = arm.lower()
-            result = self.move_pair(
-                target if side == "left" else self.left_home,
-                target if side == "right" else self.right_home,
-                active_side=side)
+        for pose_name, left_target, right_target in movements:
+            self.get_logger().info(f"Planning target pair {pose_name}")
+            result = self.move_pair(left_target, right_target)
             results.append(result)
             if result["success"]:
                 self.get_logger().info(f"{pose_name} completed successfully")
@@ -363,7 +348,7 @@ class DualArmMoveGroupJointPose(Node):
         complete_success = (len(results) == len(movements)
                             and all(r["success"] for r in results))
 
-        # Both arms return HOME after all six target moves succeed.
+        # Arms return HOME if all targets are completed.
         try:
             if complete_success:
                 if not self.move_home():
@@ -391,41 +376,23 @@ class DualArmMoveGroupJointPose(Node):
             raise RuntimeError("ROS request timed out or returned no result.")
         return future.result()
 
-    def move_pair(self, left_target, right_target, active_side=None):
+    def move_pair(self, left_target, right_target):
         result = dict(planning_time=None, validation_time=None, execution_time=None,
                       valid_plans=0, successful_poses=0, success=False, status="SETUP FAILED")
         try:
             start_state = self.build_start_state()
             scene_key = self.scene_key(self.get_scene())
-            # The inactive arm keeps its measured position, not its HOME target.
-            positions = dict(zip(start_state.joint_state.name, start_state.joint_state.position))
-            held_positions = None
-            if active_side == "left":
-                held_positions = {name: positions[name] for name in self.right_home}
-                right_target = held_positions
-            elif active_side == "right":
-                held_positions = {name: positions[name] for name in self.left_home}
-                left_target = held_positions
-            elif active_side is not None:
-                raise ValueError("Active side must be left, right or None.")
-
             result["status"] = "PLANNING FAILED"
             begin = time.perf_counter()
             try:
-                trajectory = self.plan_for_group(
-                    "both_arms", {**left_target, **right_target}, start_state,
-                    held_positions=held_positions)
+                trajectories = [
+                    self.plan_for_group("left_fr3_arm", left_target, start_state),
+                    self.plan_for_group("right_fr3_arm", right_target, start_state)]
             finally:
                 result["planning_time"] = time.perf_counter() - begin
 
             result["status"] = "PREPARATION FAILED"
-            if held_positions is not None:
-                # Remove the small permitted holding-arm motion before execution.
-                trajectory = self.hold_inactive_arm(trajectory, held_positions)
-            # Both arms keep the same timing when the path is slowed.
-            trajectory = self.prepare_trajectory(trajectory, start_state)
-            trajectories = self.split_trajectory(trajectory)
-
+            trajectories = [self.prepare_trajectory(t, start_state) for t in trajectories]
             result["status"] = "COLLISION CHECK FAILED"
             begin = time.perf_counter()
             try:
@@ -446,7 +413,6 @@ class DualArmMoveGroupJointPose(Node):
             if self.scene_key(self.get_scene()) != scene_key:
                 raise RuntimeError("Planning scene changed; pair will not execute.")
             self.check_start_unchanged(start_state)
-
             result["status"] = "EXECUTION FAILED"
             begin = time.perf_counter()
             try:
@@ -454,52 +420,12 @@ class DualArmMoveGroupJointPose(Node):
             finally:
                 result["execution_time"] = time.perf_counter() - begin
             result["status"] = "GOAL CHECK FAILED"
-            result["successful_poses"] = self.goals_reached(
-                self.build_start_state(), left_target, right_target, tolerance=0.01)
+            result["successful_poses"] = self.goals_reached(self.build_start_state(), left_target, right_target, tolerance=0.01)
             result["success"] = result["successful_poses"] == 2
-            if active_side is not None:
-                # Holding other arm does not count as a target pose.
-                result["successful_poses"] = int(result["success"])
             result["status"] = "SUCCESS" if result["success"] else "GOAL CHECK FAILED"
         except Exception as error:
             self.get_logger().error(f"{result['status']}: {error}")
         return result
-
-
-    def hold_inactive_arm(self, trajectory, held_positions):
-        # Only accept plans where the inactive arm stays within the holding tolerance.
-        traj = copy.deepcopy(trajectory)
-        indices = {name: i for i, name in enumerate(traj.joint_names)}
-        for name, position in held_positions.items():
-            if name not in indices:
-                raise RuntimeError(f"Combined plan is missing held joint {name}.")
-            index = indices[name]
-            for point in traj.points:
-                if abs(point.positions[index] - position) > 0.005:
-                    raise RuntimeError(f"Inactive arm moved in combined plan: {name}.")
-                point.positions[index] = position
-                if point.velocities:
-                    point.velocities[index] = 0.0
-                if point.accelerations:
-                    point.accelerations[index] = 0.0
-                if point.effort:
-                    point.effort[index] = 0.0
-        return traj
-
-    def split_trajectory(self, trajectory):
-        # Each controller gets its joints with the original timing.
-        trajectories = []
-        for joints in (self.left_home, self.right_home):
-            indices = [trajectory.joint_names.index(name) for name in joints]
-            arm = copy.deepcopy(trajectory)
-            arm.joint_names = list(joints)
-            for point in arm.points:
-                for field in ("positions", "velocities", "accelerations", "effort"):
-                    values = getattr(point, field)
-                    if values:
-                        setattr(point, field, [values[i] for i in indices])
-            trajectories.append(arm)
-        return trajectories
 
     def load_joint_limits(self):
         names = list(self.left_home) + list(self.right_home)
