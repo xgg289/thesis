@@ -27,7 +27,7 @@ class DualArmMoveGroupJointPose(Node):
     """Both arms share one plan for each pose pair."""
 
     def __init__(self):
-        super().__init__("combined_separate_region")
+        super().__init__("combined_separate_region_2")
         self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
         # Trial uses simulation_world.sdf.
         self.latest_joint_state = None

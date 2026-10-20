@@ -26,7 +26,7 @@ class DualArmMoveGroupJointPose(Node):
     """Each arm is planned separately for three target pairs."""
 
     def __init__(self):
-        super().__init__("independent_separate_region")
+        super().__init__("independent_separate_region_2")
         self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
         self.latest_joint_state = None
         self.create_subscription(JointState, "/joint_states", self._js_cb, 10)
