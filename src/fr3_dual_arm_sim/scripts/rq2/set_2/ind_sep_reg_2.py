@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Research Question 2: Simultaneous independent planning and execution using 3 pairs in separate workspace.
+# Research Question 2: Simultaneous independent planning and execution using 3 pairs in separate workspace (Set 2).
 import bisect
 import copy
 import math
