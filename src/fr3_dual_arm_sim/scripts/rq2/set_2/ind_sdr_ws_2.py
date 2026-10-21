@@ -28,6 +28,7 @@ class DualArmMoveGroupJointPose(Node):
     def __init__(self):
         super().__init__("independent_shared_ws_2")
         self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
+        self.collision_details = set()
         self.latest_joint_state = None
         self.create_subscription(JointState, "/joint_states", self._js_cb, 10)
         # Services handle planning and collision checks.
@@ -171,6 +172,15 @@ class DualArmMoveGroupJointPose(Node):
         if constraints is not None:
             req.constraints = constraints
         response = self.wait(self.validity_client.call_async(req), 10.0)
+        if not response.valid and response.contacts:
+            pairs = sorted({
+                tuple(sorted((c.contact_body_1, c.contact_body_2)))
+                for c in response.contacts
+            })
+            self.collision_details.update(f"{a} <-> {b}" for a, b in pairs)
+            self.get_logger().warning(
+                "Collision: " + "; ".join(f"{a} <-> {b}" for a, b in pairs)
+            )
         return response.valid
 
     def pair_samples(self, trajectories, state):
@@ -391,7 +401,8 @@ class DualArmMoveGroupJointPose(Node):
             sum(r["checked_pairs"] for r in results),
             sum(r["passed_pairs"] for r in results),
             sum(r["valid_plans"] for r in results),
-            attempted_pairs=len(results)
+            attempted_pairs=len(results),
+            collision_details=sorted({c for r in results for c in r["collision_details"]})
         )
 
     def wait(self, future, timeout=15.0):
@@ -401,6 +412,7 @@ class DualArmMoveGroupJointPose(Node):
         return future.result()
 
     def move_pair(self, left_target, right_target):
+        self.collision_details.clear()
         result = dict(planning_time=None, validation_time=None, execution_time=None, trajectory_length=None,
                       successful_poses=0, success=False,
                       status="SETUP FAILED", attempts=0, planning_failures=0,
@@ -461,6 +473,7 @@ class DualArmMoveGroupJointPose(Node):
             result["status"] = "SUCCESS" if result["success"] else "GOAL CHECK FAILED"
         except Exception as error:
             self.get_logger().error(f"{result['status']}: {error}")
+        result["collision_details"] = sorted(self.collision_details)
         return result
 
     def load_joint_limits(self):
@@ -695,7 +708,7 @@ class TrajectorySamples:
 
 def print_trial_table(node, planning, checking, execution, total, success,
                       poses, length=None, attempts=0, planning_failures=0,
-                      checked_pairs=0, passed_pairs=0, valid_plans=0, attempted_pairs=0):
+                      checked_pairs=0, passed_pairs=0, valid_plans=0, attempted_pairs=0, collision_details=()):
     def seconds(value):
         return "N/A" if value is None else f"{value:.4f} s"
 
@@ -709,6 +722,7 @@ def print_trial_table(node, planning, checking, execution, total, success,
         ("Successful poses", f"{poses}/6"),
         ("Collision-free pairs", f"{passed_pairs}/{checked_pairs}"),
         ("Planned pairs", f"{valid_plans}/{attempted_pairs}"),
+        ("Collision details", "; ".join(collision_details) or "None"),
     ]
     lines = ["", "================ TRIAL RESULTS ===============",
              f"{'Measurement':<27} {'Result':>14}", "-" * 46]
