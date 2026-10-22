@@ -1,0 +1,64 @@
+<?xml version="1.0"?>
+<sdf version="1.8">
+  <world name="simulation_world_divider">
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>50 50</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>50 50</size></plane></geometry>
+          <material><ambient>0.8 0.8 0.8 1</ambient><diffuse>0.8 0.8 0.8 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 -0.5 0</pose>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>1000</range><constant>0.9</constant><linear>0.01</linear><quadratic>0.001</quadratic></attenuation>
+      <direction>-0.5 0.5 -1</direction>
+    </light>
+
+    <!-- The robot URDF supplies the table; its upper surface is z=0.84 m.
+         Front-to-back is the world X direction. Board bottom=0.84, top=1.19. -->
+    <model name="centre_divider">
+      <static>true</static>
+      <pose>-0.10 0.00 1.015 0 0 0</pose>
+      <link name="board">
+        <collision name="collision">
+          <geometry><box><size>0.80 0.02 0.35</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.80 0.02 0.35</size></box></geometry>
+          <material><ambient>0.72 0.48 0.23 1</ambient><diffuse>0.72 0.48 0.23 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Visual-only markers: target positions of the arm flange (fr3_link8),
+         not graspable objects. Each goal is across the board from its arm. -->
+    <model name="goal_left">
+      <static>true</static>
+      <pose>-0.40 -0.15 1.14 0 0 0</pose>
+      <link name="marker">
+        <visual name="visual">
+          <geometry><sphere><radius>0.015</radius></sphere></geometry>
+          <material><ambient>0.1 0.9 0.2 1</ambient><diffuse>0.1 0.9 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="goal_right">
+      <static>true</static>
+      <pose>-0.13 0.15 1.14 0 0 0</pose>
+      <link name="marker">
+        <visual name="visual">
+          <geometry><sphere><radius>0.015</radius></sphere></geometry>
+          <material><ambient>0.15 0.4 1 1</ambient><diffuse>0.15 0.4 1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>
