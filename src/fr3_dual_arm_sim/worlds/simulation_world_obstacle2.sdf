@@ -1,0 +1,140 @@
+<?xml version="1.0"?>
+<sdf version="1.8">
+  <world name="simulation_world_divider_posts">
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>50 50</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>50 50</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 -0.5 0</pose>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.5 -1</direction>
+    </light>
+    <model name="left_divider">
+      <static>true</static>
+      <pose>-0.450 0.250 1.190 0 0 0</pose>
+      <link name="board">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.220 0.030 0.700</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.220 0.030 0.700</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.72 0.48 0.23 1</ambient>
+            <diffuse>0.72 0.48 0.23 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="right_divider">
+      <static>true</static>
+      <pose>-0.450 -0.340 1.190 0 0 0</pose>
+      <link name="board">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.220 0.030 0.700</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.220 0.030 0.700</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.72 0.48 0.23 1</ambient>
+            <diffuse>0.72 0.48 0.23 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <!-- Four static obstacles constrain the approach paths to the target poses. -->
+    <model name="divider_front_post">
+      <static>true</static>
+      <pose>-0.220 -0.050 1.170 0 0 0</pose>
+      <link name="post">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.080 0.100 0.660</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.080 0.100 0.660</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.25 0.15 1</ambient>
+            <diffuse>0.65 0.25 0.15 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="divider_rear_post">
+      <static>true</static>
+      <pose>0.180 -0.330 1.170 0 0 0</pose>
+      <link name="post">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.080 0.100 0.660</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.080 0.100 0.660</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.25 0.15 1</ambient>
+            <diffuse>0.65 0.25 0.15 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>
