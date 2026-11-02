@@ -2,4 +2,5 @@ build/
 install/
 log/
 .vscode/
-.vscode/
+/report/
+__pycache__/
