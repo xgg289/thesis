@@ -50,8 +50,13 @@ def generate_launch_description():
         default_value=os.path.join(
             pkg_dual_arm,
             'worlds',
-            'simulation_world.sdf'
-            #'simulation_world_fixed_obstacles.sdf'
+            # Worlds for different research questions (RQ1, RQ2, RQ3) and practical demonstration
+            'simulation_world.sdf'                 # No obstacles
+            # 'simulation_world_obstacle1_1.sdf'   # Single divider set 1
+            # 'simulation_world_obstacle1_2.sdf'   # Single divider set 2
+            # 'simulation_world_obstacle1_3.sdf'   # Single divider set 3
+            # 'simulation_world_obstacle2.sdf'     # Four obstacles
+            # 'practical_world.sdf'                # Practical demonstration
         ),
         description='Path to the Gazebo world file'
     )
